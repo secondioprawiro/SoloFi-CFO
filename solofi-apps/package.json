@@ -2,11 +2,13 @@
   "name": "solofi-apps",
   "version": "0.1.0",
   "description": "SoloFi CFO — Autonomous Web3 Finance Agent for OKX.AI Genesis Hackathon",
-  "main": "src/index.js",
+  "main": "dist/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit",
     "test": "node --test tests/unit tests/integration",
     "caveman": "caveman",
     "rtk:caveman": "rtk caveman"
@@ -20,9 +22,17 @@
   ],
   "author": "",
   "license": "MIT",
-  "dependencies": {},
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "viem": "^2.21.44"
+  },
   "devDependencies": {
-    "rtk": "github:rtk-ai/rtk",
-    "caveman": "github:juliusbrussee/caveman"
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.9.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3"
   }
 }

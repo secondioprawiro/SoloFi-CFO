@@ -2,32 +2,33 @@
 
 ## Overview
 
-SoloFi CFO is a Node.js backend agent that sits behind the OKX.AI chat interface. It uses LLM function calling to translate natural language into structured intents, routed to domain services (`InvoiceService`, `PocketService`, `AdvisorService`). Domain services orchestrate two backing systems: Supabase (Postgres) for persistent state, and X Layer (via an EVM client — Viem/Ethers, TBD) for on-chain monitoring and token transfers.
+SoloFi CFO is a Node.js/TypeScript backend agent with no frontend — it sits entirely behind the OKX.AI Agent Service Provider (ASP) webhook interface. It uses the Google Gemini API (Tool Use / Function Calling) to translate natural language into structured intents, routed to domain services (`InvoiceService`, `PocketService`, `AdvisorService`). Domain services orchestrate two backing systems: Supabase (Postgres) for persistent state, and X Layer (via `viem`) for on-chain monitoring and token transfers.
 
 ## Component Diagram
 
 ```mermaid
 flowchart TB
-    User((User)) <--> OKX[OKX.AI Chat Interface]
-    OKX <--> Router[intentRouter.js]
-    Router --> LLM[(LLM Function Calling)]
-    Router --> InvoiceSvc[InvoiceService]
-    Router --> PocketSvc[PocketService]
-    Router --> AdvisorSvc[AdvisorService]
+    User((User)) <--> OKX[OKX.AI Chat Interface / ASP Webhook]
+    OKX <--> Ctrl[webhook.controller.ts]
+    Ctrl --> AiSvc[AiService — Gemini Function Calling]
+    AiSvc --> InvoiceSvc[InvoiceService]
+    AiSvc --> PocketSvc[PocketService]
+    AiSvc --> AdvisorSvc[AdvisorService]
 
     InvoiceSvc --> InvoiceRepo[InvoiceRepository]
     PocketSvc --> PocketRepo[PocketRepository]
+    AdvisorSvc --> PocketRepo
 
     InvoiceRepo --> DB[(Supabase Postgres)]
     PocketRepo --> DB
 
-    InvoiceSvc --> Monitor[XLayerMonitor]
-    PocketSvc --> Transfer[TokenTransfer]
-    AdvisorSvc --> Monitor
-    AdvisorSvc --> DB
+    InvoiceSvc --> Web3Svc[Web3Service — viem]
+    PocketSvc --> Web3Svc
+    AdvisorSvc --> Web3Svc
 
-    Monitor <--> XLayer[(X Layer RPC)]
-    Transfer <--> XLayer
+    Web3Svc <--> XLayer[(X Layer RPC)]
+
+    PocketSvc -. proactive notification via OkxNotifier .-> OKX
 ```
 
 ## Data Flow Diagrams
@@ -37,38 +38,41 @@ flowchart TB
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant C as OKX.AI Chat
-    participant R as intentRouter
-    participant L as LLM
+    participant C as OKX.AI Chat / ASP Webhook
+    participant W as webhook.controller
+    participant G as AiService (Gemini)
     participant I as InvoiceService
     participant D as Supabase
 
     U->>C: "Create an invoice for 100 USDC for Client B"
-    C->>R: forward message
-    R->>L: detect intent (function calling)
-    L-->>R: {intent: CREATE_INVOICE, amount: 100, currency: USDC, client: "Client B"}
-    R->>I: createInvoice(userId, "Client B", 100, "USDC")
+    C->>W: POST /webhook/okx {userId, message}
+    W->>G: handleMessage(message, userId)
+    G->>G: Gemini function call: createInvoice(client_name, amount, currency)
+    G->>I: createInvoice(userId, "Client B", 100, "USDC")
     I->>D: insert invoice (status=PENDING)
     D-->>I: invoice record
-    I-->>R: invoice + receiving wallet
-    R-->>U: "Invoice #INV-001 created. Send 100 USDC to 0x..."
+    I-->>G: invoice + receiving wallet
+    G-->>W: "Invoice #INV-001 created. Send 100 USDC to 0x..."
+    W-->>U: { reply: "Invoice #INV-001 created..." }
 ```
 
 ### Payment Detection Flow
 
 ```mermaid
 sequenceDiagram
-    participant M as XLayerMonitor
+    participant W as Web3Service
     participant X as X Layer RPC
     participant I as InvoiceService
     participant D as Supabase
     participant P as PocketService
+    participant N as OkxNotifier
 
-    M->>X: watch incoming transfers (invoice wallet)
-    X-->>M: transfer event detected (100 USDC)
-    M->>I: onDetected(invoiceId, txHash, amount)
+    W->>X: watchContractEvent(Transfer -> agent wallet)
+    X-->>W: transfer event detected (100 USDC)
+    W-->>I: onDetected(txHash, amount)
     I->>D: update invoice (status=PAID, payment_tx_hash)
-    I->>P: executeSplit(userId, 100, "USDC")
+    I->>P: executeSplit(userId, invoiceId, 100, "USDC", txHash)
+    P-->>N: sendProactiveMessage(userId, "Payment confirmed & split...")
 ```
 
 ### Pocket Auto-Split Flow
@@ -77,18 +81,19 @@ sequenceDiagram
 sequenceDiagram
     participant P as PocketService
     participant D as Supabase
-    participant T as TokenTransfer
+    participant W as Web3Service
     participant X as X Layer RPC
 
     P->>D: getPocketRules(userId)
     D-->>P: [{name, wallet, percentage}, ...]
-    P->>P: compute split amounts
-    P->>T: splitPayment(amount, pocketRules)
+    P->>W: splitPayment(amount, currency, pocketRules)
     loop each pocket
-        T->>X: transferToken(agentWallet, pocketWallet, share)
-        X-->>T: tx hash
-        T->>D: insert transaction_log (action=SPLIT)
+        W->>W: compute share (amount * percentage / 100)
+        W->>X: writeContract transfer(agentWallet, pocketWallet, share)
+        X-->>W: tx hash
     end
+    W-->>P: [{name, wallet_address, amount, txHash}, ...]
+    P->>D: insert transaction_log (action=SPLIT) per transfer
 ```
 
 ### AI Query Flow
@@ -96,22 +101,21 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant R as intentRouter
+    participant G as AiService (Gemini)
     participant A as AdvisorService
     participant D as Supabase
     participant X as X Layer RPC
 
-    U->>R: "What's my cashflow this week?"
-    R->>A: queryCashflow(userId, "week")
-    A->>D: read transaction_logs + invoices (last 7 days)
-    A->>X: getBalance(pocket wallets)
-    A-->>R: natural-language summary
-    R-->>U: "You received 250 USDC across 3 invoices..."
+    U->>G: "What's my cashflow this week?"
+    G->>A: queryCashflow(userId, "week")
+    A->>D: read transaction_logs (last 7 days)
+    A-->>G: natural-language summary
+    G-->>U: "You received 250 USDC across 3 invoices..."
 ```
 
 ## Database Schema
 
-See [`src/infrastructure/database/migrations/001_initial_schema.sql`](./src/infrastructure/database/migrations/001_initial_schema.sql) for the executable definition.
+See [`src/database/migrations/001_initial_schema.sql`](./src/database/migrations/001_initial_schema.sql) for the executable definition.
 
 - **`users`** — `id, wallet_address, created_at`
 - **`invoices`** — `id, user_id, client_name, amount, currency, status [PENDING/PAID/CANCELLED], payment_tx_hash, created_at, paid_at`
@@ -123,7 +127,7 @@ See [`src/infrastructure/database/migrations/001_initial_schema.sql`](./src/infr
 
 ### LLM Function Definitions
 
-Defined in `src/agent/functions/`:
+Defined in [`src/agent/functions/index.ts`](./src/agent/functions/index.ts) (Gemini `FunctionDeclaration` format), dispatched in [`src/services/AiService.ts`](./src/services/AiService.ts):
 
 | Function | Params | Returns |
 |---|---|---|
@@ -134,17 +138,10 @@ Defined in `src/agent/functions/`:
 
 ### Internal Service Interfaces
 
-- `InvoiceService.createInvoice(userId, clientName, amount, currency)`
-- `InvoiceService.markAsPaid(invoiceId, txHash)`
-- `InvoiceService.getInvoicesByUser(userId)`
-- `InvoiceService.getPendingInvoices(userId)`
-- `PocketService.setPocketRules(userId, rules)`
-- `PocketService.getPocketRules(userId)`
-- `PocketService.executeSplit(userId, receivedAmount, currency)`
-- `XLayerMonitor.watchForPayment(walletAddress, expectedAmount, onDetected)`
-- `XLayerMonitor.getBalance(walletAddress, tokenAddress)`
-- `TokenTransfer.splitPayment(amount, pocketRules)`
-- `TokenTransfer.transferToken(from, to, amount, tokenAddress)`
+- [`InvoiceService`](./src/services/InvoiceService.ts) — `createInvoice(userId, clientName, amount, currency)`, `markAsPaid(invoiceId, txHash)`, `getInvoicesByUser(userId)`, `getPendingInvoices(userId)`
+- [`PocketService`](./src/services/PocketService.ts) — `setPocketRules(userId, rules)`, `getPocketRules(userId)`, `executeSplit(userId, invoiceId, receivedAmount, currency, paymentTxHash)`
+- [`AdvisorService`](./src/services/AdvisorService.ts) — `queryBalance(userId, pocketName?)`, `queryCashflow(userId, period)`
+- [`Web3Service`](./src/services/Web3Service.ts) — `getAgentAddress()`, `getBalance(walletAddress, currency)`, `watchForPayment(walletAddress, expectedAmount, currency, onDetected)`, `transferToken(to, amount, currency)`, `splitPayment(amount, currency, pocketRules)`
 
 ## Security Considerations
 

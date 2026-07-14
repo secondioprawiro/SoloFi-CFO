@@ -1,10 +1,12 @@
 # Product Requirements Document — SoloFi CFO
 
-Version: 1.0 | Status: Draft | Date: 2026-07-14
+Version: 1.1 | Status: Draft | Date: 2026-07-14
 
 ## 1. Executive Summary
 
 SoloFi CFO is an autonomous Web3 finance agent built for the OKX.AI platform. It acts as an automatic Chief Financial Officer for freelancers, remote workers, and solopreneurs paid in crypto: generating invoices, detecting on-chain payments, auto-allocating funds into budget "pockets," and answering financial questions in natural language — all running on X Layer.
+
+SoloFi CFO ships with **no frontend**. The entire product is a backend API that receives webhooks from the OKX.AI Agent Service Provider (ASP) platform, resolves user intent via LLM function calling, executes on-chain operations on X Layer, and replies in the JSON format OKX.AI's chat interface expects.
 
 ## 2. Problem Statement & Market Opportunity
 
@@ -80,9 +82,20 @@ Runs a one-person crypto-native business (content, consulting, small SaaS) with 
 ## 8. Technical Constraints
 
 - Hackathon deadline: **17 July 2026**
-- Must integrate with the OKX.AI Agent Platform (chat interface, function calling)
+- Must integrate with the OKX.AI Agent Service Provider (ASP) platform — receives OKX.AI webhooks, returns responses in OKX.AI's exact expected JSON format. Reference: `okx.ai` ASP tutorial.
 - Must run on **X Layer** (OKX's EVM-compatible L2)
-- Tech stack items marked TBD (LLM provider, HTTP framework, Web3 library) are decided by the team before implementation — do not hardcode
+- No frontend / no hosted UI — the product's only surface is the webhook API consumed by OKX.AI
+- **Tech stack (decided):**
+
+  | Layer | Choice |
+  |---|---|
+  | Runtime / Language | Node.js + TypeScript |
+  | HTTP Framework | Express.js |
+  | LLM | Google Gemini API (`@google/generative-ai`, `gemini-1.5-flash`, Tool Use / Function Calling) |
+  | Database | Supabase (PostgreSQL) |
+  | Web3 | `viem` (X Layer RPC connections, event watching, transaction execution) |
+
+- **Code organization:** strict Clean Architecture / separation of concerns — Controllers (parse OKX.AI webhook payloads), Services (`AiService` for Gemini prompts/tool use, `Web3Service` for on-chain monitoring and routing), Repositories (Supabase persistence).
 
 ## 9. Success Metrics
 

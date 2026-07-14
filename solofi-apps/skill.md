@@ -22,7 +22,7 @@ Primary Intents & Examples
 - notify_payment_status
   - Example: backend men-trigger: "Pembayaran 100 USDC telah diterima dan dibagi sesuai aturan."
 
-Function Calling (OpenAI Function Call) — mapping ke backend
+Function Calling (Google Gemini Tool Use) — mapping ke backend
 
 - setPocketRule({ownerWallet, allocations: [{percent, targetWallet}]}) -> persist ke DB
 - createInvoice({amount, currency, description, client}) -> create invoice record
@@ -31,9 +31,10 @@ Function Calling (OpenAI Function Call) — mapping ke backend
 
 Implementation Notes (Backend responsibilities)
 
-- Webhook listener untuk on-chain events (X Layer). File referensi: [src/infrastructure/web3/TokenTransfer.js](src/infrastructure/web3/TokenTransfer.js#L1)
-- Function handlers: map intent -> call repository/service. See: [src/agent/functions/createInvoice.fn.js](src/agent/functions/createInvoice.fn.js#L1) and [src/agent/functions/setPocketRule.fn.js](src/agent/functions/setPocketRule.fn.js#L1)
-- Invoice and pocket services: [src/domain/invoice/InvoiceService.js](src/domain/invoice/InvoiceService.js#L1), [src/domain/pocket/PocketService.js](src/domain/pocket/PocketService.js#L1)
+- On-chain monitoring & transfer execution (X Layer, via `viem`). File referensi: [src/services/Web3Service.ts](src/services/Web3Service.ts#L1)
+- Function handlers: Gemini tool declarations di [src/agent/functions/index.ts](src/agent/functions/index.ts#L1), di-dispatch ke domain service di [src/services/AiService.ts](src/services/AiService.ts#L1)
+- Invoice and pocket services: [src/services/InvoiceService.ts](src/services/InvoiceService.ts#L1), [src/services/PocketService.ts](src/services/PocketService.ts#L1)
+- Webhook entrypoint: [src/controllers/webhook.controller.ts](src/controllers/webhook.controller.ts#L1)
 
 On-chain Execution
 

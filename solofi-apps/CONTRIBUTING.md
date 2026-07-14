@@ -10,7 +10,7 @@ cp .env.example .env      # fill in your own keys, never commit .env
 npm run dev
 ```
 
-Node.js 18+ recommended (native `--watch` and test runner used in `npm run dev` / `npm test`).
+Node.js 18+ required. `npm run dev` runs the TypeScript server via `tsx watch`; `npm run build` compiles to `dist/`; `npm run typecheck` runs `tsc --noEmit`.
 
 ## Git Workflow
 
@@ -21,10 +21,10 @@ Node.js 18+ recommended (native `--watch` and test runner used in `npm run dev` 
 
 ## Code Style
 
-- ES Modules (`import`/`export`), no CommonJS `require`
-- One class per file, matching filename (`InvoiceService.js` → `class InvoiceService`)
-- Business logic lives in `src/domain/`, external integrations in `src/infrastructure/`
-- Leave `// TODO:` comments for anything blocked on a team decision (tech stack TBD items) — don't hardcode a library choice without discussion
+- TypeScript, ES Modules (`import`/`export`, NodeNext resolution — local imports need a `.js` extension even though the source is `.ts`)
+- One class per file, matching filename (`InvoiceService.ts` → `class InvoiceService`)
+- Clean Architecture layering: `src/controllers/` (parse OKX.AI webhook payloads) → `src/services/` (`AiService`, `Web3Service`, and domain services `InvoiceService`/`PocketService`/`AdvisorService`) → `src/repositories/` (Supabase persistence)
+- Leave `// TODO:` comments for anything blocked on an external unknown (e.g. confirming the exact OKX ASP payload contract) — don't guess and hardcode silently
 
 ## Running Tests
 

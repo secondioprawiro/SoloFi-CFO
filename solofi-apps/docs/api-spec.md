@@ -2,20 +2,30 @@
 
 ## Webhook (inbound from OKX.AI)
 
-`POST /webhook` (route TBD once HTTP framework is chosen)
+`POST /webhook/okx`
 
 ```json
 {
-  "userId": "uuid",
+  "userId": "0xTestWallet",
   "message": "Create an invoice for 100 USDC for Client B"
 }
 ```
 
-Handled by [`src/api/webhook.js`](../src/api/webhook.js) → [`src/agent/intentRouter.js`](../src/agent/intentRouter.js).
+Response:
+
+```json
+{
+  "reply": "Invoice #INV-001 created. Send 100 USDC to 0x..."
+}
+```
+
+> Payload shape is a best-effort assumption (see [`src/types/okx.types.ts`](../src/types/okx.types.ts)) — OKX.AI's ASP model is actually built around Onchain OS / Agentic Wallet + an A2A/A2MCP marketplace contract, and the exact wire format needs confirming against OKX's dev docs once reachable.
+
+Handled by [`src/controllers/webhook.controller.ts`](../src/controllers/webhook.controller.ts) → [`src/services/AiService.ts`](../src/services/AiService.ts).
 
 ## LLM Function Definitions
 
-Defined in `src/agent/functions/`. Each is a JSON-schema function-calling definition passed to the LLM alongside the system prompt.
+Defined in [`src/agent/functions/index.ts`](../src/agent/functions/index.ts) as Gemini `FunctionDeclaration`s, passed to `gemini-1.5-flash` alongside the system prompt ([`src/agent/prompts/systemPrompt.ts`](../src/agent/prompts/systemPrompt.ts)).
 
 ### `createInvoice`
 | param | type | required |
