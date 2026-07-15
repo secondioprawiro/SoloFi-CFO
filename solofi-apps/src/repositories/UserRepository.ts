@@ -1,4 +1,5 @@
 import { supabase } from '../infrastructure/supabase.client.js';
+import { assertNoSupabaseError } from '../infrastructure/supabaseError.js';
 
 export interface User {
   id: string;
@@ -14,7 +15,7 @@ export class UserRepository {
       .eq('wallet_address', walletAddress)
       .maybeSingle();
 
-    if (findError) throw findError;
+    assertNoSupabaseError(findError, 'UserRepository.findOrCreateByWallet (find)');
     if (existing) return existing as User;
 
     const { data: created, error: insertError } = await supabase
@@ -23,13 +24,13 @@ export class UserRepository {
       .select('*')
       .single();
 
-    if (insertError) throw insertError;
+    assertNoSupabaseError(insertError, 'UserRepository.findOrCreateByWallet (create)');
     return created as User;
   }
 
   async findById(userId: string): Promise<User | null> {
     const { data, error } = await supabase.from('users').select('*').eq('id', userId).maybeSingle();
-    if (error) throw error;
+    assertNoSupabaseError(error, 'UserRepository.findById');
     return (data as User) ?? null;
   }
 }

@@ -1,4 +1,5 @@
 import { supabase } from '../infrastructure/supabase.client.js';
+import { assertNoSupabaseError } from '../infrastructure/supabaseError.js';
 import type { TransactionLog } from '../types/pocket.types.js';
 
 export class TransactionLogRepository {
@@ -27,7 +28,7 @@ export class TransactionLogRepository {
       .select('*')
       .single();
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'TransactionLogRepository.log');
     return data as TransactionLog;
   }
 
@@ -39,7 +40,7 @@ export class TransactionLogRepository {
       .gte('created_at', sinceIso)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'TransactionLogRepository.findByUserSince');
     return (data as TransactionLog[]) ?? [];
   }
 }

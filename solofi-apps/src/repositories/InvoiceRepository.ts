@@ -1,4 +1,5 @@
 import { supabase } from '../infrastructure/supabase.client.js';
+import { assertNoSupabaseError } from '../infrastructure/supabaseError.js';
 import type { Invoice } from '../types/invoice.types.js';
 
 export class InvoiceRepository {
@@ -20,13 +21,13 @@ export class InvoiceRepository {
       .select('*')
       .single();
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.create');
     return data as Invoice;
   }
 
   async findById(invoiceId: string): Promise<Invoice | null> {
     const { data, error } = await supabase.from('invoices').select('*').eq('id', invoiceId).maybeSingle();
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.findById');
     return (data as Invoice) ?? null;
   }
 
@@ -37,7 +38,7 @@ export class InvoiceRepository {
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.findByUser');
     return (data as Invoice[]) ?? [];
   }
 
@@ -49,7 +50,7 @@ export class InvoiceRepository {
       .eq('status', 'PENDING')
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.findPendingByUser');
     return (data as Invoice[]) ?? [];
   }
 
@@ -72,7 +73,7 @@ export class InvoiceRepository {
       .limit(1)
       .maybeSingle();
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.findOldestPendingMatch');
     return (data as Invoice) ?? null;
   }
 
@@ -84,7 +85,7 @@ export class InvoiceRepository {
       .select('*')
       .single();
 
-    if (error) throw error;
+    assertNoSupabaseError(error, 'InvoiceRepository.markAsPaid');
     return data as Invoice;
   }
 }
