@@ -4,15 +4,20 @@ import { createPublicClient, createWalletClient, http, defineChain, type Address
 import { privateKeyToAccount } from 'viem/accounts';
 import { env } from '../config/env.js';
 
+const isTestnet = env.xLayer.chainId !== 196;
+
 export const xLayer = defineChain({
   id: env.xLayer.chainId,
-  name: 'X Layer',
+  name: isTestnet ? 'X Layer Testnet' : 'X Layer',
   nativeCurrency: { name: 'OKB', symbol: 'OKB', decimals: 18 },
   rpcUrls: {
     default: { http: [env.xLayer.rpcUrl] },
   },
   blockExplorers: {
-    default: { name: 'X Layer Explorer', url: 'https://www.oklink.com/xlayer' },
+    default: {
+      name: 'X Layer Explorer',
+      url: isTestnet ? 'https://www.oklink.com/xlayer-test' : 'https://www.oklink.com/xlayer',
+    },
   },
 });
 
@@ -21,11 +26,23 @@ export const publicClient = createPublicClient({
   transport: http(env.xLayer.rpcUrl),
 });
 
-// Only instantiate an account/wallet client when a key is configured — lets the
-// service boot in read-only mode (e.g. local dev without a funded agent wallet).
-export const agentAccount = env.xLayer.agentWalletPrivateKey
-  ? privateKeyToAccount(env.xLayer.agentWalletPrivateKey as `0x${string}`)
-  : undefined;
+// Only instantiate an account/wallet client when a valid key is configured — lets
+// the service boot in read-only mode (e.g. local dev without a funded agent
+// wallet, or with a placeholder key not yet filled in) instead of crashing.
+function loadAgentAccount() {
+  if (!env.xLayer.agentWalletPrivateKey) return undefined;
+  try {
+    return privateKeyToAccount(env.xLayer.agentWalletPrivateKey as `0x${string}`);
+  } catch (err) {
+    console.warn(
+      `[web3.config] AGENT_WALLET_PRIVATE_KEY is set but invalid (${(err as Error).message}) — ` +
+        'booting in read-only mode. On-chain writes (transfers, invoice watching) will fail until fixed.',
+    );
+    return undefined;
+  }
+}
+
+export const agentAccount = loadAgentAccount();
 
 export const walletClient = agentAccount
   ? createWalletClient({

@@ -4,6 +4,7 @@
 // and reply in OKX.AI's expected JSON shape.
 
 import express from 'express';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { env } from './config/env.js';
 
 import { UserRepository } from './repositories/UserRepository.js';
@@ -19,6 +20,9 @@ import { AiService } from './services/AiService.js';
 import { OkxNotifier } from './services/OkxNotifier.js';
 
 import { createWebhookController } from './controllers/webhook.controller.js';
+import { createSoloFiMcpServer } from './mcp/server.js';
+import { paymentMiddlewareFromConfig } from '@okxweb3/x402-express';
+import { x402Enabled, facilitatorClient, x402Schemes, X402_NETWORK, payToAddress } from './infrastructure/x402.config.js';
 
 function bootstrap() {
   const userRepository = new UserRepository();
@@ -48,6 +52,49 @@ function bootstrap() {
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/webhook', createWebhookController(aiService, userRepository));
+
+  // x402 billing for the A2MCP endpoint — degrades to free if the OKX Payment
+  // SDK facilitator credentials (OKX_API_KEY/OKX_SECRET_KEY/OKX_PASSPHRASE, from
+  // the OKX Developer Portal — separate from OKX_AI_API_KEY/OKX_AI_AGENT_ID)
+  // aren't configured yet, so the server still boots and /mcp still works.
+  if (x402Enabled && payToAddress) {
+    app.use(
+      paymentMiddlewareFromConfig(
+        {
+          '/mcp': {
+            accepts: {
+              scheme: 'exact',
+              network: X402_NETWORK,
+              payTo: payToAddress,
+              price: env.okxPayment.price,
+            },
+            description: 'SoloFi CFO — Invoice & Cashflow Agent (A2MCP)',
+            mimeType: 'application/json',
+          },
+        },
+        facilitatorClient,
+        x402Schemes,
+      ),
+    );
+  } else {
+    console.warn(
+      '[x402] payment middleware disabled — OKX_API_KEY/OKX_SECRET_KEY/OKX_PASSPHRASE not configured (or no agent wallet for payTo). /mcp is serving free of charge.',
+    );
+  }
+
+  // OKX.AI A2MCP path: real MCP server, stateless (one server+transport per call,
+  // no session tracking) since our four tools are each independent deterministic
+  // requests — matches OKX's "free endpoint" A2MCP model.
+  app.post('/mcp', async (req, res) => {
+    const mcpServer = createSoloFiMcpServer(userRepository, invoiceService, pocketService, advisorService);
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    res.on('close', () => {
+      transport.close();
+      mcpServer.close();
+    });
+    await mcpServer.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  });
 
   app.listen(env.port, () => {
     console.log(`SoloFi CFO agent listening on port ${env.port} (${env.nodeEnv})`);

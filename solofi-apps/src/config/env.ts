@@ -31,17 +31,28 @@ export const env = {
 
   supabase: {
     url: optional('SUPABASE_URL'),
-    serviceRoleKey: optional('SUPABASE_SERVICE_ROLE_KEY'),
+    // sb_secret_... key (Supabase's new API key system) — replaces the legacy service_role key.
+    secretKey: optional('SUPABASE_SECRET_KEY'),
   },
 
   xLayer: {
-    rpcUrl: optional('X_LAYER_RPC_URL', 'https://rpc.xlayer.tech'),
-    chainId: Number(optional('X_LAYER_CHAIN_ID', '196')),
+    rpcUrl: optional('X_LAYER_RPC_URL', 'https://testrpc.xlayer.tech'),
+    chainId: Number(optional('X_LAYER_CHAIN_ID', '1952')),
     agentWalletPrivateKey: optional('AGENT_WALLET_PRIVATE_KEY'),
     tokens: {
       USDC: optional('USDC_ADDRESS'),
       USDT: optional('USDT_ADDRESS'),
     },
+  },
+
+  // OKX Payment SDK (x402) facilitator credentials — from the OKX Developer Portal,
+  // NOT the same as OKX_AI_API_KEY/OKX_AI_AGENT_ID (those are ASP marketplace identity).
+  okxPayment: {
+    apiKey: optional('OKX_API_KEY'),
+    secretKey: optional('OKX_SECRET_KEY'),
+    passphrase: optional('OKX_PASSPHRASE'),
+    price: optional('X402_PRICE', '$0.20'),
+    payToAddress: optional('X402_PAY_TO_ADDRESS'),
   },
 } as const;
 
