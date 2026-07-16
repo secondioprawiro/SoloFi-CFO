@@ -8,7 +8,7 @@ import type { InvoiceService } from './InvoiceService.js';
 import type { PocketService } from './PocketService.js';
 import type { AdvisorService } from './AdvisorService.js';
 
-const MODEL_NAME = 'gemini-1.5-flash';
+const MODEL_NAME = 'gemini-2.5-flash';
 
 export class AiService {
   private readonly genAI = new GoogleGenerativeAI(env.gemini.apiKey);
