@@ -77,6 +77,23 @@ Both were only found by booting the real server and hitting `/mcp` with actual
 tool calls — not by typecheck or the mocked unit test suite. Worth remembering
 next time something looks "done": run it for real before believing it.
 
+3. **`gemini-1.5-flash` retired — 404 on `generateContent`.** Discovered only
+   after a real deploy to Railway: `AiService.ts` hardcoded `MODEL_NAME =
+   'gemini-1.5-flash'`, which returned `404 This model ... is no longer
+   available to new users` in production (the legacy `@google/generative-ai`
+   SDK itself is also fully deprecated upstream — EOL 2025-11-30 — though the
+   package still works for REST calls against models it can reach). Root-caused
+   by querying this exact API key's live model list
+   (`GET /v1beta/models`) and testing `generateContent` directly against
+   candidates via curl rather than guessing from docs. First swapped to
+   `gemini-2.5-flash` (still listed in `ListModels` for this key) — that also
+   404'd with the same "no longer available to new users" message, proving
+   `ListModels` is stale/lies for this account tier. Settled on the alias
+   `gemini-flash-latest` (currently resolves to `gemini-3.5-flash` under the
+   hood) specifically so this can't rot again before the deadline — verified
+   both plain `generateContent` and function-calling (`tools`) work correctly
+   against it via direct curl before deploying. Fixed in `src/services/AiService.ts`.
+
 ## 3. `.env` — what's filled and where each value came from
 
 Do **not** put secret values in this file or in git. This section documents
@@ -153,13 +170,16 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
 2. ✅ `onchainos` binary installed + verified + `onchainos preflight --skill-version 4.2.4` passing (`integrity: "ok"`, version current)
 3. ✅ Logged into Agentic Wallet via email OTP (`wallet login <email>` → `wallet verify <code>`) — new account created, EVM address `0xe21aa6c2990e5d996ddacea74643782d0f564e0a`
 4. ✅ Consented to marketplace terms (`agent pre-check --role asp` → consent gate → accepted)
-5. ✅ Identity fields confirmed: Name "SoloFi CFO", description "Autonomous finance agent for X Layer", avatar uploaded (`agent upload`) → CDN URL `https://static.okx.com/cdn/web3/wallet/marketplace/headimages/agent/avatar/cde50759-c446-4220-b3f2-cfa5ef017ddc.png`
-6. ⏳ Blocked on: real deployed `https://` endpoint (see §5 Deployment below — needs a teammate to actually deploy) before the service card (name/description/type/fee/endpoint) can be finalized and `agent create` run
-7. Then: list on marketplace — **24h review turnaround**, result emailed to the login address
+5. ✅ Identity fields confirmed: Name "SoloFi CFO", description "Autonomous finance agent for X Layer", avatar uploaded (`agent upload`) → CDN URL `https://static.okx.com/cdn/web3/wallet/marketplace/headimages/agent/avatar/a8e1dcd7-c1e9-4974-99c2-15c3714d5367.png` (note: an earlier upload's CDN URL, `.../cde50759-....png`, went stale between sessions and got rejected by `agent create` with `profilePicture is not a valid uploaded avatar` — re-uploaded fresh via `agent upload` immediately before create in the same command sequence to avoid the gap)
+6. ✅ Teammate deployed the backend to Railway — endpoint `https://solofi-cfo3-production.up.railway.app/mcp` (domain changed twice mid-deploy: `solofi-cfo` → `solofi-cfo2-production` → `solofi-cfo3-production`; always re-verify the live domain before using it anywhere)
+7. ✅ Service card finalized: name "Invoice & Cashflow Agent", 2-part description (capability + required inputs), type `A2MCP`, fee `0.2` (USDT implied), endpoint as above. `validate-listing` QA passed clean (`pass:true`, no findings) — note the CLI's actual `--service` JSON keys are camelCase (`serviceName`/`serviceDescription`/`serviceType`), not the lowercase shown in the skill reference's own error-message example; use `agent create --help` / `agent validate-listing --help` as the source of truth if this drifts again.
+8. ✅ `agent create --role asp ...` succeeded — **Agent ID `#6130`**, on-chain tx `0x0365dd1aba1000f33611bf97f6096b9d80c6801d3b859662f6b9501825aded1f` (X Layer, chainIndex 196)
+9. ✅ `agent activate --agent-id 6130` — required bootstrapping the OKX A2A communication runtime first (`okx-a2a` CLI wasn't installed: `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix --json` until `ready:true`). Submitted for review (`submitApproval: {success:true, approvalStatus:2}`).
+10. ✅ Confirmed independently via `agent get-my-agents` — `#6130` shows `approvalLabel: "Listing under review"`, `statusLabel: "not listed"` (expected; flips once OKX approves, usually within 24h)
 
-Given the 24h review window and the 2026-07-17 deadline, this needs to finish
-today. The demo doesn't strictly depend on approval landing in time (the
-Gemini/webhook path works standalone), but the ASP badge itself does.
+Given the 24h review window and the 2026-07-17 deadline, this needed to finish
+same-day — it did. The demo doesn't strictly depend on approval landing in time
+(the Gemini/webhook path works standalone), but the ASP badge itself does.
 
 **Skipped for now (optional, not blocking):** Policy Setting (spending
 limits/whitelist) and Wallet Export — both web-portal-only actions the CLI
@@ -198,8 +218,33 @@ paraphrase, since WebFetch summaries of code examples are lossy.
 | `OKX_API_KEY` / `OKX_SECRET_KEY` / `OKX_PASSPHRASE` | Facilitator signing (HMAC-SHA256 per OKX REST API spec) for verifying/settling x402 payments | OKX Developer Portal — `web3.okx.com/onchainos/dev-portal` |
 | `OKX_AI_API_KEY` / `OKX_AI_AGENT_ID` | ASP marketplace identity (§4) | Issued after ASP registration completes |
 
-These are two unrelated systems that happen to both start with `OKX_`. Not
-obtained yet — likely something a teammate sets up during deploy (see §6).
+These are two unrelated systems that happen to both start with `OKX_`.
+
+**Status: `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE` obtained and verified live.**
+Created via OKX Developer Portal (`web3.okx.com/onchainos/dev-portal` → connect
+wallet → verify address → link email/phone → Create API key). Set in Railway's
+Variables tab (not committed — see `.env` locally, gitignored). After redeploy,
+confirmed x402 is actively enforcing by hitting `/mcp` with no payment header:
+
+```
+HTTP/1.1 402 Payment Required
+payment-required: <base64 JSON>
+```
+
+Decoded challenge confirms every field matches the registered service exactly:
+`network: "eip155:1952"` (X Layer testnet), `asset: 0x9e29b3aada...` (USDT₮0),
+`amount: "200000"` (= 0.2 USDT at 6 decimals — matches the `0.2` fee set during
+ASP registration §4), `payTo: 0x9e008a07507d...797Da3` (the X Layer agent wallet).
+
+`OKX_AI_API_KEY`/`OKX_AI_AGENT_ID` — `OKX_AI_AGENT_ID` is now known (`6130`,
+from §4 step 8) and filled. `OKX_AI_API_KEY` is still unresolved — it's
+consumed only by `OkxNotifier.ts`'s optional proactive-notify feature, which is
+independently gated behind `OKX_AI_CALLBACK_URL` (also unset, marked TODO in
+that file — the real outbound endpoint/auth contract for OKX.AI proactive
+messages was never confirmed in OKX's reachable docs). Not blocking: the
+feature already no-ops via the callback-URL gate regardless. Leave as
+placeholder; revisit only if OKX's marketplace dashboard surfaces this key
+post-approval and there's spare time.
 
 `X402_PRICE` (default `$0.20`) and `X402_PAY_TO_ADDRESS` (optional override,
 defaults to the agent wallet address) are also new — added to `.env.example`.
@@ -211,11 +256,16 @@ verification commands). Short version: this needs an always-on Node process
 (not serverless) because `Web3Service.watchForPayment` holds a persistent
 on-chain event listener open — Vercel-style serverless would kill that
 listener between requests and payment detection would silently never fire.
-Not yet deployed by us; a teammate is expected to run through
-`docs/DEPLOYMENT.md` and report back the real `https://` URL so ASP
-registration (§4) can be completed with it as the `endpoint` field.
 
-## 5. Verifying the current state
+**Deployed.** Live at `https://solofi-cfo3-production.up.railway.app`
+(domain changed twice during setup: `solofi-cfo` → `solofi-cfo2-production` →
+`solofi-cfo3-production` — always re-verify the current domain in Railway's
+dashboard before testing/registering against it). Both `/health` and `/mcp`
+confirmed working; `/webhook/okx` confirmed working end-to-end (real invoice
+created via Gemini → function call → Supabase write). See §2 item 3 for the
+model-retirement bug this surfaced and its fix.
+
+## 7. Verifying the current state
 
 ```bash
 npm run typecheck   # tsc --noEmit, should be clean
@@ -237,7 +287,7 @@ against `queryBalance`/`queryCashflow`/`setPocketRule` should hit the real
 Supabase project; `createInvoice` additionally needs a valid
 `AGENT_WALLET_PRIVATE_KEY` (already configured) to register the payment watcher.
 
-## 6. Reference links used during this work
+## 8. Reference links used during this work
 
 - OKX ASP overview: `https://web3.okx.com/onchainos/dev-docs/okxai/asp`
 - OKX A2MCP guide (endpoint compliance, curl self-check, x402 challenge shape): `https://web3.okx.com/onchainos/dev-docs/okxai/howtomcp`

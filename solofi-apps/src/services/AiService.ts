@@ -1,6 +1,6 @@
 // AiService — Gemini prompts, Tool Use / Function Calling, and routing to domain services.
 
-import { GoogleGenerativeAI, type FunctionCall } from '@google/generative-ai';
+import { GoogleGenerativeAI, type FunctionCall, type GenerativeModel, type GenerateContentResult } from '@google/generative-ai';
 import { env } from '../config/env.js';
 import { SYSTEM_PROMPT } from '../agent/prompts/systemPrompt.js';
 import { FUNCTION_DECLARATIONS } from '../agent/functions/index.js';
@@ -26,7 +26,7 @@ export class AiService {
       tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
     });
 
-    const result = await model.generateContent(userMessage);
+    const result = await this.generateWithRetry(model, userMessage);
     const calls = result.response.functionCalls();
 
     if (!calls || calls.length === 0) {
@@ -34,6 +34,17 @@ export class AiService {
     }
 
     return this.dispatch(calls[0], userId);
+  }
+
+  // Gemini's free tier occasionally throws a transient 5xx/rate-limit error;
+  // one retry clears most of them without masking a real failure.
+  private async generateWithRetry(model: GenerativeModel, userMessage: string): Promise<GenerateContentResult> {
+    try {
+      return await model.generateContent(userMessage);
+    } catch (err) {
+      console.warn('[AiService] generateContent failed, retrying once:', err);
+      return model.generateContent(userMessage);
+    }
   }
 
   private async dispatch(call: FunctionCall, userId: string): Promise<string> {
