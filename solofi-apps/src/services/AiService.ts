@@ -1,6 +1,6 @@
 // AiService — Gemini prompts, Tool Use / Function Calling, and routing to domain services.
 
-import { GoogleGenerativeAI, type FunctionCall, type GenerativeModel, type GenerateContentResult } from '@google/generative-ai';
+import { GoogleGenerativeAI, type FunctionCall, type GenerateContentResult } from '@google/generative-ai';
 import { env } from '../config/env.js';
 import { SYSTEM_PROMPT } from '../agent/prompts/systemPrompt.js';
 import { FUNCTION_DECLARATIONS } from '../agent/functions/index.js';
@@ -8,7 +8,10 @@ import type { InvoiceService } from './InvoiceService.js';
 import type { PocketService } from './PocketService.js';
 import type { AdvisorService } from './AdvisorService.js';
 
-const MODEL_NAME = 'gemini-flash-latest';
+// Free-tier quota (RPD) is per-model, not shared — if one model's daily quota
+// is exhausted, try the next rather than failing the whole request. Ordered by
+// preference; keep all entries on the free tier (never add a paid-only model).
+const MODEL_CANDIDATES = ['gemini-flash-lite-latest', 'gemini-flash-latest', 'gemini-2.0-flash-lite'];
 
 export class AiService {
   private readonly genAI = new GoogleGenerativeAI(env.gemini.apiKey);
@@ -20,13 +23,7 @@ export class AiService {
   ) {}
 
   async handleMessage(userMessage: string, userId: string): Promise<string> {
-    const model = this.genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      systemInstruction: SYSTEM_PROMPT,
-      tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
-    });
-
-    const result = await this.generateWithRetry(model, userMessage);
+    const result = await this.generateWithFallback(userMessage);
     const calls = result.response.functionCalls();
 
     if (!calls || calls.length === 0) {
@@ -36,15 +33,39 @@ export class AiService {
     return this.dispatch(calls[0], userId);
   }
 
-  // Gemini's free tier occasionally throws a transient 5xx/rate-limit error;
-  // one retry clears most of them without masking a real failure.
-  private async generateWithRetry(model: GenerativeModel, userMessage: string): Promise<GenerateContentResult> {
-    try {
-      return await model.generateContent(userMessage);
-    } catch (err) {
-      console.warn('[AiService] generateContent failed, retrying once:', err);
-      return model.generateContent(userMessage);
+  // Free-tier daily quota is per-model. On a quota error (429), fall through
+  // to the next candidate model instead of failing the request; on any other
+  // (transient 5xx) error, retry the same model once before moving on.
+  private async generateWithFallback(userMessage: string): Promise<GenerateContentResult> {
+    let lastError: unknown;
+
+    for (const modelName of MODEL_CANDIDATES) {
+      const model = this.genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: SYSTEM_PROMPT,
+        tools: [{ functionDeclarations: FUNCTION_DECLARATIONS }],
+      });
+
+      try {
+        return await model.generateContent(userMessage);
+      } catch (err) {
+        lastError = err;
+        const isQuotaError = err instanceof Error && /429|quota/i.test(err.message);
+        if (isQuotaError) {
+          console.warn(`[AiService] ${modelName} quota exhausted, trying next candidate:`, err);
+          continue;
+        }
+        console.warn(`[AiService] ${modelName} failed, retrying once:`, err);
+        try {
+          return await model.generateContent(userMessage);
+        } catch (retryErr) {
+          lastError = retryErr;
+          console.warn(`[AiService] ${modelName} failed again, trying next candidate:`, retryErr);
+        }
+      }
     }
+
+    throw lastError;
   }
 
   private async dispatch(call: FunctionCall, userId: string): Promise<string> {
