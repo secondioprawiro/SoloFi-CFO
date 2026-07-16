@@ -8,6 +8,9 @@
 
 Built for the **OKX.AI Genesis Hackathon** (deadline: 17 July 2026).
 
+🔴 **Live:** registered on OKX.AI as ASP **#6130** (SoloFi CFO) — listing under review.
+MCP endpoint: `https://solofi-cfo3-production.up.railway.app/mcp` (paid via x402, 0.2 USDT/call).
+
 ---
 
 ## 🎯 Problem Statement
@@ -16,13 +19,18 @@ Web3-native income earners — freelance developers, remote workers paid in stab
 
 ## 💡 Solution
 
-SoloFi CFO is a **backend-only AI agent** that plugs into the **OKX.AI** platform as an Agent Service Provider (ASP). It has no UI of its own — users talk to it entirely through the OKX.AI chat interface. Behind the scenes, it:
+SoloFi CFO is a **backend-only AI agent** that plugs into the **OKX.AI** platform as a registered Agent Service Provider (ASP #6130). It has no UI of its own. Behind the scenes, it:
 
 - generates Web3 invoices and watches the chain for payment,
 - automatically routes incoming funds into user-defined "pockets" (wallets) by percentage,
 - and answers financial questions in natural language.
 
-All state changes are driven by webhooks from OKX.AI in, and webhooks/chat responses back out — there is no page to open, no dashboard to host.
+It exposes **two entry points** over the same business logic:
+
+- **`POST /mcp`** — a real [Model Context Protocol](https://github.com/modelcontextprotocol/typescript-sdk) server (JSON-RPC 2.0, `tools/list`/`tools/call`). This is what's registered with OKX.AI's marketplace as an **A2MCP** service — OKX's own agent calls these 4 tools directly with structured arguments, no LLM involved on our side. Billed per-call via **x402** (OKX's HTTP 402 payment protocol) at 0.2 USDT/call on X Layer testnet.
+- **`POST /webhook/okx`** — a free-form chat interface (Gemini does NL → intent routing). Not required by OKX's registration, but a fully working standalone demo path — useful for judges to see the agent respond to plain English/Indonesian without needing an OKX.AI session.
+
+There is no page to open, no dashboard to host.
 
 ## ✨ Features (MVP)
 
@@ -40,12 +48,15 @@ SoloFi CFO has **no frontend**. It is a single Node.js/TypeScript backend that r
 
 ```mermaid
 flowchart TB
-    User((User)) <--> OKX[OKX.AI Chat / ASP Webhook]
-    OKX <--> Ctrl[Webhook Controller]
-    Ctrl --> AiSvc[AiService — Gemini Function Calling]
-    AiSvc --> InvoiceSvc[InvoiceService]
-    AiSvc --> PocketSvc[PocketService]
-    AiSvc --> AdvisorSvc[AdvisorService]
+    OKXMarket[OKX.AI Marketplace — ASP #6130] -- x402 paid call --> Mcp[POST /mcp — MCP server]
+    User((User / Demo)) <--> Webhook[POST /webhook/okx]
+    Webhook --> AiSvc[AiService — Gemini Function Calling]
+    Mcp --> InvoiceSvc[InvoiceService]
+    Mcp --> PocketSvc[PocketService]
+    Mcp --> AdvisorSvc[AdvisorService]
+    AiSvc --> InvoiceSvc
+    AiSvc --> PocketSvc
+    AiSvc --> AdvisorSvc
 
     InvoiceSvc --> Repo[(Repositories)]
     PocketSvc --> Repo
@@ -57,7 +68,7 @@ flowchart TB
     AdvisorSvc --> Web3Svc
     Web3Svc <--> XLayer[(X Layer RPC)]
 
-    PocketSvc -.proactive notification.-> OKX
+    PocketSvc -.proactive notification.-> Webhook
 ```
 
 Layers follow Clean Architecture / separation of concerns:
@@ -78,13 +89,15 @@ npm install
 npm run dev
 ```
 
-There is no page to visit — once running, the service listens on `POST /webhook/okx` for OKX.AI webhook calls. Trigger it by activating the skill on OKX.AI, or locally with:
+There is no page to visit — once running, the service listens on `POST /mcp` (OKX ASP calls) and `POST /webhook/okx` (chat demo). Try it locally:
 
 ```bash
 curl -X POST localhost:3000/webhook/okx \
   -H "Content-Type: application/json" \
   -d '{"userId": "0xTestWallet", "message": "Create a 100 USDC invoice for Client B"}'
 ```
+
+Or against the live deployment — see the 🔴 Live line at the top of this file, and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for Railway deploy steps.
 
 ### Using RTK / Caveman helpers
 
@@ -97,17 +110,25 @@ curl -X POST localhost:3000/webhook/okx \
 |---|---|
 | Runtime / Language | Node.js + TypeScript |
 | HTTP Framework | Express.js |
-| AI / LLM | Google Gemini API (`@google/generative-ai`, `gemini-1.5-flash`, Tool Use / Function Calling) |
+| AI / LLM | Google Gemini API (`@google/generative-ai`, `gemini-flash-latest`, Tool Use / Function Calling) — used only by the `/webhook/okx` demo path, not `/mcp` |
 | Database | Supabase (PostgreSQL) |
 | Web3 | `viem` (X Layer RPC, event watching, transaction execution) |
-| Blockchain | X Layer (OKX's EVM-compatible L2) |
-| Platform | OKX.AI Agent Service Provider (ASP) |
+| Blockchain | X Layer (OKX's EVM-compatible L2), testnet chain 1952 |
+| Agent protocol | Model Context Protocol (`@modelcontextprotocol/sdk`) — the real `/mcp` server registered with OKX |
+| Payments | OKX x402 (`@okxweb3/x402-express`/`-core`/`-evm`) — per-call billing on `/mcp` |
+| Platform | OKX.AI Agent Service Provider — **ASP #6130**, registered & submitted for review |
 
 ## 📡 API Reference
 
-- **Inbound:** `POST /webhook/okx` receives the OKX.AI ASP payload (`userId`, `message`) and returns `{ reply }` in the JSON shape OKX.AI expects. See [src/controllers/webhook.controller.ts](src/controllers/webhook.controller.ts#L1) and [src/types/okx.types.ts](src/types/okx.types.ts#L1) (payload shape is a best-effort assumption — see the note in that file).
-- **Outbound:** [`OkxNotifier`](src/services/OkxNotifier.ts#L1) calls back to OKX.AI to push proactive chat messages (e.g. payment-confirmed notifications) — see Pilar 4 in [skill.md](skill.md).
-- **LLM function-calling schema:** `createInvoice`, `setPocketRule`, `queryBalance`, `queryCashflow` — defined in [src/agent/functions/index.ts](src/agent/functions/index.ts#L1) and dispatched in [src/services/AiService.ts](src/services/AiService.ts#L1).
+- **`POST /mcp`** — the registered OKX.AI A2MCP endpoint. Real MCP server ([src/mcp/server.ts](src/mcp/server.ts#L1)), stateless, JSON-RPC 2.0. Billed via x402 (0.2 USDT/call) when `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE` are set; serves free otherwise. Exposes 4 tools, each taking an explicit `user_wallet` argument (best-guess auth contract — OKX never published how caller identity is carried on `tools/call`, see `docs/INTEGRATION_LOG.md` §1):
+  ```bash
+  curl -X POST https://solofi-cfo3-production.up.railway.app/mcp \
+    -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+  ```
+- **`POST /webhook/okx`** receives `{ userId, message }` free-form chat and returns `{ reply }`. Standalone demo path, not required by OKX. See [src/controllers/webhook.controller.ts](src/controllers/webhook.controller.ts#L1).
+- **Outbound:** [`OkxNotifier`](src/services/OkxNotifier.ts#L1) calls back to OKX.AI to push proactive chat messages (e.g. payment-confirmed notifications) — see Pilar 4 in [skill.md](skill.md). Currently a no-op (gated behind an unconfirmed `OKX_AI_CALLBACK_URL` contract — not blocking).
+- **Function/tool schema:** `createInvoice`, `setPocketRule`, `queryBalance`, `queryCashflow` — defined in [src/agent/functions/index.ts](src/agent/functions/index.ts#L1) (Gemini declarations) and [src/mcp/server.ts](src/mcp/server.ts#L1) (MCP tools), dispatched in [src/services/AiService.ts](src/services/AiService.ts#L1).
 
 ## 🌐 X Layer Integration
 
