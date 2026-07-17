@@ -159,7 +159,9 @@ See [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) for the full judged demo walkthro
 
 ## 🤝 Team
 
-_placeholder — add team member names here before submission_
+- **secondio10** — backend, OKX/x402/MCP integration, ASP registration
+- **devDedeo** — backend collaborator
+- **Ezra** — Railway deployment & ops
 
 ## 📄 License
 

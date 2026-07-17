@@ -94,6 +94,29 @@ next time something looks "done": run it for real before believing it.
    both plain `generateContent` and function-calling (`tools`) work correctly
    against it via direct curl before deploying. Fixed in `src/services/AiService.ts`.
 
+4. **`gemini-flash-latest` quota exhausted — `429 RESOURCE_EXHAUSTED` in prod.**
+   Discovered days later on a routine retest: free-tier `gemini-3.5-flash`
+   (what `gemini-flash-latest` resolves to) allows only **20 requests/day**,
+   already used up from testing. Ruled out as a repeat of the earlier transient
+   503 "high demand" error since it persisted across multiple retests. Rather
+   than swap to a single new model (same failure mode later, another
+   redeploy-via-teammate cycle needed), built a fallback chain in
+   `AiService.ts`: on a 429/quota error, try the next model in
+   `MODEL_CANDIDATES` instead of failing the request; on any other error,
+   retry the same model once first. Free-tier only, per explicit constraint —
+   no paid tier, ever. Verified each candidate directly via curl before
+   picking the order:
+   - `gemini-flash-lite-latest` (→ `gemini-3.1-flash-lite`) — separate quota
+     pool, confirmed working incl. function-calling. **First** in the chain.
+   - `gemini-flash-latest` (→ `gemini-3.5-flash`) — kept as **second**
+     fallback (it's the one that hit quota, but resets daily).
+   - `gemini-2.0-flash-lite` — shows `limit: 0` for this API key/project,
+     hard-disabled rather than just exhausted; unknown output quality since
+     never actually exercised. Kept as **last** resort only, per explicit
+     instruction: siblings must exhaust first since we don't know what this
+     one actually returns.
+   Verified locally (real server boot + curl) before pushing; commit `0de122b`.
+
 ## 3. `.env` — what's filled and where each value came from
 
 Do **not** put secret values in this file or in git. This section documents
@@ -176,6 +199,9 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
 8. ✅ `agent create --role asp ...` succeeded — **Agent ID `#6130`**, on-chain tx `0x0365dd1aba1000f33611bf97f6096b9d80c6801d3b859662f6b9501825aded1f` (X Layer, chainIndex 196)
 9. ✅ `agent activate --agent-id 6130` — required bootstrapping the OKX A2A communication runtime first (`okx-a2a` CLI wasn't installed: `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix --json` until `ready:true`). Submitted for review (`submitApproval: {success:true, approvalStatus:2}`).
 10. ✅ Confirmed independently via `agent get-my-agents` — `#6130` shows `approvalLabel: "Listing under review"`, `statusLabel: "not listed"` (expected; flips once OKX approves, usually within 24h)
+11. ❌ **First review attempt rejected** — email: "avatar doesn't meet the required specifications — the dimensions are incorrect and rounded corners are not allowed." The originally uploaded avatar (item 5 above) was neither 440×440 nor square-cornered.
+12. ✅ Generated a compliant replacement: `scripts/gen-avatar.py` (Pillow) — flat RGB PNG, exactly 440×440, no alpha/rounded corners, coin motif + rising bars + "SFC" monogram. Saved as `assets/solofi-avatar.png`, committed.
+13. ✅ Re-uploaded (`agent upload --file assets/solofi-avatar.png`) → new CDN URL, applied via `agent update --agent-id 6130 --picture <url>` (on-chain tx confirmed), then `agent activate --agent-id 6130 --preferred-language en` to resubmit — `submitApproval: {success:true, approvalStatus:2}`. Confirmed via `agent get-my-agents`: back to "Listing under review" with the new avatar attached. No code/env change involved — no redeploy needed for this fix.
 
 Given the 24h review window and the 2026-07-17 deadline, this needed to finish
 same-day — it did. The demo doesn't strictly depend on approval landing in time
