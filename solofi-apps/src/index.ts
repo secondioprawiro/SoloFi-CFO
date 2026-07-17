@@ -58,24 +58,34 @@ function bootstrap() {
   // the OKX Developer Portal — separate from OKX_AI_API_KEY/OKX_AI_AGENT_ID)
   // aren't configured yet, so the server still boots and /mcp still works.
   if (x402Enabled && payToAddress) {
-    app.use(
-      paymentMiddlewareFromConfig(
-        {
-          '/mcp': {
-            accepts: {
-              scheme: 'exact',
-              network: X402_NETWORK,
-              payTo: payToAddress,
-              price: env.okxPayment.price,
-            },
-            description: 'SoloFi CFO — Invoice & Cashflow Agent (A2MCP)',
-            mimeType: 'application/json',
+    const x402Middleware = paymentMiddlewareFromConfig(
+      {
+        '/mcp': {
+          accepts: {
+            scheme: 'exact',
+            network: X402_NETWORK,
+            payTo: payToAddress,
+            price: env.okxPayment.price,
           },
+          description: 'SoloFi CFO — Invoice & Cashflow Agent (A2MCP)',
+          mimeType: 'application/json',
         },
-        facilitatorClient,
-        x402Schemes,
-      ),
+      },
+      facilitatorClient,
+      x402Schemes,
     );
+    // MCP handshake methods (initialize, tools/list, ping, notifications/*)
+    // must succeed unpaid — any standard MCP client, including OKX's own
+    // agent, calls these before it ever reaches a billable tools/call. Gating
+    // the whole /mcp path uniformly breaks that handshake and looks like a
+    // non-responding agent to platform testing (confirmed: OKX rejected the
+    // ASP listing with "unable to receive a response... task timed out").
+    app.use((req, res, next) => {
+      if (req.path === '/mcp' && req.body?.method === 'tools/call') {
+        return x402Middleware(req, res, next);
+      }
+      next();
+    });
   } else {
     console.warn(
       '[x402] payment middleware disabled — OKX_API_KEY/OKX_SECRET_KEY/OKX_PASSPHRASE not configured (or no agent wallet for payTo). /mcp is serving free of charge.',
