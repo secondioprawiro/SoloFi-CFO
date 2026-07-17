@@ -235,9 +235,51 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
     `agent activate`. Confirmed back to "Listing under review" with the
     corrected endpoint attached.
 
+16. ❌ **Fourth review attempt — same exact rejection text again**, despite
+    items 15's fixes verified live. Found one more real bug while
+    investigating: `req.protocol`/https was correct, but `trust proxy` fix
+    aside, curl testing with **no `Accept` header at all** (simulating a
+    non-strict client — plausible for OKX's tester, since their own docs
+    never specify a caller-identity convention either) revealed the MCP
+    SDK hard-requires `Accept: application/json, text/event-stream` or it
+    403/406s before ever reaching our route — `tools/list`/`initialize`
+    both 406'd with a bare `Accept: */*` (curl's default). This explains
+    both complaints as one failure: their validator never even reaches our
+    `402` challenge (No.1), and a `406` isn't a shape their tester expects,
+    reading as no response (No.2).
+    - Fixed in `src/index.ts`: middleware that normalizes `req.headers.accept`
+      on any `/mcp` request missing the required values, before the request
+      reaches the transport or the x402 gate.
+    - Caught a subtlety mid-fix: mutating `req.headers` alone was a no-op —
+      the MCP SDK's Node adapter (`@hono/node-server`) builds its Request
+      from `req.rawHeaders` (the raw flat array), not `req.headers` (Express's
+      parsed object). Had to patch both.
+    - Verified locally and against the live `solofi-cfo4` deployment: with
+      **zero** `Accept` header sent, `tools/list`/`initialize` → 200 (was
+      406), `tools/call` unpaid → 402 with the correct `https://` URL, `GET`/
+      `DELETE` → 405 JSON. Also re-ran the full **paid** round-trip via
+      `scripts/test-x402-payment.ts` against production — real signed
+      payment, real settlement, 200 OK, invoice `#DCD5EA84` created.
+17. ❌ **Fifth resubmit — same rejection text yet again**, with no new code
+    change (nothing left to fix that's independently verifiable from the
+    outside). Every layer testable via curl/Postman/the payment script now
+    passes: unpaid challenge, paid settlement, correct headers/protocol/
+    methods, both with and without a spec-compliant client. At this point
+    the remaining explanation is something in OKX's platform tester that
+    isn't observable from outside (possibly it doesn't hit the HTTP `/mcp`
+    endpoint at all, going through the separate on-chain A2A/XMTP channel
+    instead — `okx-a2a daemon` is a persistent background process our
+    Railway deployment doesn't run; unconfirmed whether this matters for an
+    A2MCP-type service). Decision: stop looping on unverifiable guesses
+    given the deadline — the live endpoint's correctness is independently
+    proven regardless of marketplace approval status, which is what
+    actually matters for judging.
+
 Given the 24h review window and the 2026-07-17 deadline, this needed to finish
-same-day — it did. The demo doesn't strictly depend on approval landing in time
-(the Gemini/webhook path works standalone), but the ASP badge itself does.
+same-day — it did not resolve as of the last check (still "Listing under
+review"). Approval is not required for the demo to work: repo + live endpoint
+are independently verifiable via curl/Postman/the x402 script (proven
+repeatedly above), and the Gemini/webhook path works standalone.
 
 **Skipped for now (optional, not blocking):** Policy Setting (spending
 limits/whitelist) and Wallet Export — both web-portal-only actions the CLI
