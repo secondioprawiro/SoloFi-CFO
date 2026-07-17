@@ -9,7 +9,7 @@
 Built for the **OKX.AI Genesis Hackathon** (deadline: 17 July 2026).
 
 🔴 **Live:** registered on OKX.AI as ASP **#6130** (SoloFi CFO) — listing under review.
-MCP endpoint: `https://solofi-cfo3-production.up.railway.app/mcp` (paid via x402, 0.2 USDT/call).
+MCP endpoint: `https://solofi-cfo4.up.railway.app/mcp` (paid via x402, 0.2 USDT/call).
 
 ---
 
@@ -122,7 +122,7 @@ Or against the live deployment — see the 🔴 Live line at the top of this fil
 
 - **`POST /mcp`** — the registered OKX.AI A2MCP endpoint. Real MCP server ([src/mcp/server.ts](src/mcp/server.ts#L1)), stateless, JSON-RPC 2.0. Billed via x402 (0.2 USDT/call) when `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE` are set; serves free otherwise. Exposes 4 tools, each taking an explicit `user_wallet` argument (best-guess auth contract — OKX never published how caller identity is carried on `tools/call`, see `docs/INTEGRATION_LOG.md` §1):
   ```bash
-  curl -X POST https://solofi-cfo3-production.up.railway.app/mcp \
+  curl -X POST https://solofi-cfo4.up.railway.app/mcp \
     -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   ```

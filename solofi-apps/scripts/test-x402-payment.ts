@@ -15,7 +15,7 @@ import { x402Client, x402HTTPClient } from '@okxweb3/x402-core/client';
 import { registerExactEvmScheme } from '@okxweb3/x402-evm/exact/client';
 import { toClientEvmSigner } from '@okxweb3/x402-evm';
 
-const MCP_URL = process.env.MCP_URL ?? 'https://solofi-cfo3-production.up.railway.app/mcp';
+const MCP_URL = process.env.MCP_URL ?? 'https://solofi-cfo4.up.railway.app/mcp';
 const PRIVATE_KEY = process.env.AGENT_WALLET_PRIVATE_KEY as `0x${string}`;
 
 if (!PRIVATE_KEY) {

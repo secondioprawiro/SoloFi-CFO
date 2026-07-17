@@ -194,7 +194,7 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
 3. ✅ Logged into Agentic Wallet via email OTP (`wallet login <email>` → `wallet verify <code>`) — new account created, EVM address `0xe21aa6c2990e5d996ddacea74643782d0f564e0a`
 4. ✅ Consented to marketplace terms (`agent pre-check --role asp` → consent gate → accepted)
 5. ✅ Identity fields confirmed: Name "SoloFi CFO", description "Autonomous finance agent for X Layer", avatar uploaded (`agent upload`) → CDN URL `https://static.okx.com/cdn/web3/wallet/marketplace/headimages/agent/avatar/a8e1dcd7-c1e9-4974-99c2-15c3714d5367.png` (note: an earlier upload's CDN URL, `.../cde50759-....png`, went stale between sessions and got rejected by `agent create` with `profilePicture is not a valid uploaded avatar` — re-uploaded fresh via `agent upload` immediately before create in the same command sequence to avoid the gap)
-6. ✅ Teammate deployed the backend to Railway — endpoint `https://solofi-cfo3-production.up.railway.app/mcp` (domain changed twice mid-deploy: `solofi-cfo` → `solofi-cfo2-production` → `solofi-cfo3-production`; always re-verify the live domain before using it anywhere)
+6. ✅ Teammate deployed the backend to Railway — endpoint `https://solofi-cfo4.up.railway.app/mcp` (domain changed repeatedly across the project: `solofi-cfo` → `solofi-cfo2-production` → `solofi-cfo3-production` → `solofi-cfo4`; root cause found late — the deploying teammate's Railway free trial only works with a repo under his own GitHub account, so he deploys from a fork, and each reconnect recreated the service/domain. Fix going forward: he uses GitHub's "Sync fork" button to pull our commits into his fork's `main`, which his existing Railway connection then auto-deploys — no new service needed. Always re-verify the live domain before using it anywhere.)
 7. ✅ Service card finalized: name "Invoice & Cashflow Agent", 2-part description (capability + required inputs), type `A2MCP`, fee `0.2` (USDT implied), endpoint as above. `validate-listing` QA passed clean (`pass:true`, no findings) — note the CLI's actual `--service` JSON keys are camelCase (`serviceName`/`serviceDescription`/`serviceType`), not the lowercase shown in the skill reference's own error-message example; use `agent create --help` / `agent validate-listing --help` as the source of truth if this drifts again.
 8. ✅ `agent create --role asp ...` succeeded — **Agent ID `#6130`**, on-chain tx `0x0365dd1aba1000f33611bf97f6096b9d80c6801d3b859662f6b9501825aded1f` (X Layer, chainIndex 196)
 9. ✅ `agent activate --agent-id 6130` — required bootstrapping the OKX A2A communication runtime first (`okx-a2a` CLI wasn't installed: `npm i -g @okxweb3/a2a-node`, then `okx-a2a doctor --fix --json` until `ready:true`). Submitted for review (`submitApproval: {success:true, approvalStatus:2}`).
@@ -202,6 +202,38 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
 11. ❌ **First review attempt rejected** — email: "avatar doesn't meet the required specifications — the dimensions are incorrect and rounded corners are not allowed." The originally uploaded avatar (item 5 above) was neither 440×440 nor square-cornered.
 12. ✅ Generated a compliant replacement: `scripts/gen-avatar.py` (Pillow) — flat RGB PNG, exactly 440×440, no alpha/rounded corners, coin motif + rising bars + "SFC" monogram. Saved as `assets/solofi-avatar.png`, committed.
 13. ✅ Re-uploaded (`agent upload --file assets/solofi-avatar.png`) → new CDN URL, applied via `agent update --agent-id 6130 --picture <url>` (on-chain tx confirmed), then `agent activate --agent-id 6130 --preferred-language en` to resubmit — `submitApproval: {success:true, approvalStatus:2}`. Confirmed via `agent get-my-agents`: back to "Listing under review" with the new avatar attached. No code/env change involved — no redeploy needed for this fix.
+
+14. ❌ **Second review attempt rejected — visual quality, not dimensions.** Email
+    referenced illustrated-character agent avatars (`okx.ai/agents/2023`,
+    `/3345`) as the expected style — flat abstract icon+monogram wasn't
+    polished/on-brand enough. Redesigned `scripts/gen-avatar.py` into a
+    robot-CFO mascot (chart-screen head, suit + tie, gold coin, gradient +
+    drop shadow for depth). Re-uploaded, `agent update --picture`, resubmitted.
+15. ❌ **Third review attempt rejected — "unable to receive a response...
+    task timed out."** Two real bugs found, both fixed same session:
+    - `src/index.ts`: the x402 payment middleware gated the entire `/mcp`
+      path uniformly, so MCP handshake methods (`initialize`, `tools/list`)
+      also returned `402` instead of a normal response. Any standard MCP
+      client — OKX's platform tester included — stalls on the handshake
+      before it ever reaches a billable `tools/call`. Fixed by checking
+      `req.body.method === 'tools/call'` before invoking the x402 middleware,
+      letting discovery/handshake calls through free. Caught a second bug
+      while fixing this: mounting the check at `app.use('/mcp', ...)` strips
+      the path prefix before the inner middleware sees it (it matches on the
+      literal `/mcp` key internally), silently no-opping the gate entirely —
+      had to mount at `app.use(...)` (no path) and check `req.path === '/mcp'`
+      manually instead. Verified locally: `tools/list`/`initialize` → 200
+      unpaid, `tools/call` → 402 unpaid / 200 paid.
+    - Separately, the registered service's `endpoint` field was stale —
+      pointed at `solofi-cfo3-production...` while the live deployment had
+      since moved to `solofi-cfo4.up.railway.app` (see item 6's domain-churn
+      note). This alone would have caused the exact same symptom regardless
+      of the middleware bug. Fixed via `agent update --agent-id 6130
+      --service '[{"operation":"update","id":"34703",...,"endpoint":"https://solofi-cfo4.up.railway.app/mcp"}]'`.
+    Both fixes verified against the live `solofi-cfo4` deployment
+    (`tools/list`/`initialize` 200, `tools/call` 402) before resubmitting via
+    `agent activate`. Confirmed back to "Listing under review" with the
+    corrected endpoint attached.
 
 Given the 24h review window and the 2026-07-17 deadline, this needed to finish
 same-day — it did. The demo doesn't strictly depend on approval landing in time
@@ -283,10 +315,11 @@ verification commands). Short version: this needs an always-on Node process
 on-chain event listener open — Vercel-style serverless would kill that
 listener between requests and payment detection would silently never fire.
 
-**Deployed.** Live at `https://solofi-cfo3-production.up.railway.app`
-(domain changed twice during setup: `solofi-cfo` → `solofi-cfo2-production` →
-`solofi-cfo3-production` — always re-verify the current domain in Railway's
-dashboard before testing/registering against it). Both `/health` and `/mcp`
+**Deployed.** Live at `https://solofi-cfo4.up.railway.app`
+(domain changed repeatedly during setup: `solofi-cfo` → `solofi-cfo2-production`
+→ `solofi-cfo3-production` → `solofi-cfo4` — see §4 item 6 for why; always
+re-verify the current domain in Railway's dashboard before testing/registering
+against it). Both `/health` and `/mcp`
 confirmed working; `/webhook/okx` confirmed working end-to-end (real invoice
 created via Gemini → function call → Supabase write). See §2 item 3 for the
 model-retirement bug this surfaced and its fix.
