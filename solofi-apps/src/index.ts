@@ -111,6 +111,20 @@ function bootstrap() {
     await transport.handleRequest(req, res, req.body);
   });
 
+  // Stateless mode doesn't support the GET (SSE stream) / DELETE (session
+  // teardown) capabilities, but they must still return a clean JSON-RPC 405
+  // rather than falling through to Express's default 404 HTML page — some
+  // MCP clients probe these first, and an unexpected non-JSON response there
+  // reads as a non-responding agent (per the SDK's own reference example:
+  // examples/server/simpleStatelessStreamableHttp.ts).
+  const methodNotAllowed = (_req: express.Request, res: express.Response) => {
+    res.writeHead(405, { 'Content-Type': 'application/json' }).end(
+      JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null }),
+    );
+  };
+  app.get('/mcp', methodNotAllowed);
+  app.delete('/mcp', methodNotAllowed);
+
   app.listen(env.port, () => {
     console.log(`SoloFi CFO agent listening on port ${env.port} (${env.nodeEnv})`);
   });
