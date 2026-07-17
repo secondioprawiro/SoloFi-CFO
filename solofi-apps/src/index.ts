@@ -55,6 +55,36 @@ function bootstrap() {
   app.set('trust proxy', true);
   app.use(express.json());
 
+  // The MCP SDK hard-requires Accept to list both application/json and
+  // text/event-stream, or it rejects with 406 before ever reaching our route
+  // or the x402 gate. OKX's platform tester isn't a strict MCP SDK client
+  // (their own docs never specify a caller-identity convention either), so
+  // it likely doesn't send that exact header — every request would then die
+  // at 406, which explains both "x402 validation failed" (never reaches our
+  // 402 challenge) and "no response/timeout" (406 isn't a shape their tester
+  // expects) rejections. Normalize rather than trust the caller to comply.
+  app.use((req, _res, next) => {
+    if (req.path === '/mcp') {
+      const required = ['application/json', 'text/event-stream'];
+      const current = req.headers.accept ?? '';
+      const missing = required.filter((t) => !current.includes(t));
+      if (missing.length > 0) {
+        const merged = [current, ...missing].filter(Boolean).join(', ');
+        req.headers.accept = merged;
+        // The MCP SDK's Node adapter (@hono/node-server) builds its Request
+        // from req.rawHeaders, not req.headers — mutating headers alone is a
+        // no-op from the SDK's point of view, so patch rawHeaders too.
+        const idx = req.rawHeaders.findIndex((h, i) => i % 2 === 0 && h.toLowerCase() === 'accept');
+        if (idx >= 0) {
+          req.rawHeaders[idx + 1] = merged;
+        } else {
+          req.rawHeaders.push('Accept', merged);
+        }
+      }
+    }
+    next();
+  });
+
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
   app.use('/webhook', createWebhookController(aiService, userRepository));
 
