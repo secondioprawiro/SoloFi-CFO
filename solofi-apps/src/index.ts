@@ -48,6 +48,11 @@ function bootstrap() {
   const aiService = new AiService(invoiceService, pocketService, advisorService);
 
   const app = express();
+  // Railway sits behind a proxy — without this, req.protocol always reads
+  // 'http' even on real https requests, which the x402 middleware bakes into
+  // the challenge's resource.url, mismatching the actual https endpoint and
+  // failing OKX's x402 standard validation.
+  app.set('trust proxy', true);
   app.use(express.json());
 
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
