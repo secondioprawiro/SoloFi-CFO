@@ -10,7 +10,17 @@ import type { Network, SchemeRegistration } from '@okxweb3/x402-express';
 import { env } from '../config/env.js';
 import { agentAccount } from './web3.config.js';
 
-export const X402_NETWORK: Network = env.xLayer.chainId === 196 ? 'eip155:196' : 'eip155:1952';
+// Deliberately NOT tied to env.xLayer.chainId (which stays testnet 1952 for
+// the rest of the app — invoices, pocket splits, RPC — all unaffected by this).
+// OKX's own task/token backend only recognizes tokens on X Layer mainnet:
+// `agent x402-check` against our /mcp endpoint returned tokenResolveError
+// ("not in the task system's supported token list") for the SDK's own
+// default testnet asset (eip155:1952), while the equivalent mainnet default
+// (eip155:196, USDT0 at 0x779ded0c9e1022225f8e0630b35a9b54be713736) resolves
+// fine via `token info`. Every "x402 standard validation" ASP rejection is
+// consistent with testnet simply not being a supported chain for their
+// real platform validator, regardless of which testnet asset is used.
+export const X402_NETWORK: Network = 'eip155:196';
 
 export const x402Enabled = Boolean(env.okxPayment.apiKey && env.okxPayment.secretKey && env.okxPayment.passphrase);
 
