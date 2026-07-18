@@ -275,11 +275,58 @@ irrelevant once you have the binary directly; use `checksums.txt` instead.)
     proven regardless of marketplace approval status, which is what
     actually matters for judging.
 
+18. ✅ **Real root cause found — X Layer testnet unsupported by OKX's own
+    token/task backend, not an HTTP-layer bug at all.** Item 17's "stop
+    looping" conclusion was wrong — there was one more layer to test. At the
+    user's suggestion, registered a second OKX.AI identity as a **User**
+    (`agent create --role user` → agent ID `6368`) and drove the same
+    task-creation flow OKX's real platform tester uses, instead of raw HTTP:
+    - `agent create-task ... --service-token-address <testnet USDT₮0>` failed
+      outright: `"unsupported serviceTokenAddress: 0x9e29b3aada..."`.
+    - `agent x402-check --endpoint https://solofi-cfo4.up.railway.app/mcp
+      --agent-id 6368 ...` (a direct diagnostic mirroring OKX's own
+      validator) returned `tokenResolveError: "asset ... is not in the task
+      system's supported token list (checked: USDT, USDG)"`.
+    - Confirmed via `token info --address <asset> --chain 1952` and `--chain
+      196`: testnet (1952) returns empty for every asset tried, `token
+      search --chain 1952` outright errors `"Unsupported chain IDs: 1952"`,
+      while mainnet (196) resolves real tokens fine.
+    - Checked the x402 SDK's own source
+      (`node_modules/@okxweb3/x402-evm/dist/cjs/index.js`,
+      `DEFAULT_STABLECOINS`) to confirm the testnet asset we'd been using was
+      already the SDK's own canonical default — not a misconfigured address,
+      genuinely just an unsupported chain on OKX's backend.
+    - This explains every prior "x402 standard validation failed" +
+      "timeout" rejection in items 15-17: OKX's real platform tester
+      resolves the token before ever sending a request, fails silently on
+      an unresolvable testnet asset, and reports it as a generic
+      timeout/non-response — invisible to any HTTP-layer test (curl,
+      Postman, our own payment script all worked because they don't do
+      that resolution step).
+    - **Fix (user-approved after AskUserQuestion, since it changes what
+      network real money would move on):** `src/infrastructure/x402.config.ts`
+      — `X402_NETWORK` hardcoded to `'eip155:196'` (X Layer mainnet),
+      deliberately decoupled from `env.xLayer.chainId` (which stays testnet
+      `1952` for the rest of the app — invoices, pocket splits, RPC all
+      unaffected). Zero cost to us: we're only the payment *receiver*; a
+      payer would need real mainnet USDT0 to complete a purchase, but ASP
+      approval itself doesn't require an actual payment to go through.
+    - Verified live after teammate redeployed: `curl POST /mcp tools/call`
+      unpaid → `402` with `network: "eip155:196"`, mainnet USDT0 asset
+      (`0x779ded0c9e1022225f8e0630b35a9b54be713736`). `onchainos agent
+      x402-check` against the live endpoint now returns `"valid":true` with
+      **no** `tokenResolveError` (previously always present). Resubmitted via
+      `agent activate --agent-id 6130`; confirmed via `agent get-my-agents`
+      back to `approvalDisplayStatus: 2` ("Listing under review").
+
 Given the 24h review window and the 2026-07-17 deadline, this needed to finish
-same-day — it did not resolve as of the last check (still "Listing under
-review"). Approval is not required for the demo to work: repo + live endpoint
-are independently verifiable via curl/Postman/the x402 script (proven
-repeatedly above), and the Gemini/webhook path works standalone.
+same-day. As of the mainnet fix (item 18), the endpoint is independently
+verified clean at every layer previously testable, including the one that was
+actually broken the whole time. Final marketplace approval outcome pending
+OKX's next automated review pass. Approval is not required for the demo to
+work regardless: repo + live endpoint are independently verifiable via
+curl/Postman/the x402 script (proven repeatedly above), and the Gemini/webhook
+path works standalone.
 
 **Skipped for now (optional, not blocking):** Policy Setting (spending
 limits/whitelist) and Wallet Export — both web-portal-only actions the CLI
@@ -300,10 +347,13 @@ paraphrase, since WebFetch summaries of code examples are lossy.
 
 **New code:**
 - `src/infrastructure/x402.config.ts` — sets up `OKXFacilitatorClient`,
-  registers `ExactEvmScheme` for network `eip155:1952` (testnet) /
-  `eip155:196` (mainnet, auto-picked from `X_LAYER_CHAIN_ID`), and resolves
-  `payToAddress` (falls back to the agent wallet's own address — same wallet
-  used for invoices/splits, so no separate payout address needed).
+  registers `ExactEvmScheme` for network `eip155:196` (X Layer **mainnet**,
+  hardcoded — see §4 item 18: OKX's task/token backend doesn't support
+  testnet `eip155:1952` at all, so this is deliberately decoupled from
+  `X_LAYER_CHAIN_ID`, which stays testnet for the rest of the app), and
+  resolves `payToAddress` (falls back to the agent wallet's own address —
+  same wallet used for invoices/splits, so no separate payout address
+  needed).
 - `src/index.ts` — mounts `paymentMiddlewareFromConfig` in front of `/mcp`
   **only when** `x402Enabled` (i.e. `OKX_API_KEY`/`OKX_SECRET_KEY`/`OKX_PASSPHRASE`
   are all set). Otherwise logs a warning and `/mcp` serves free — same
