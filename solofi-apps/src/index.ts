@@ -132,7 +132,16 @@ function bootstrap() {
   // requests — matches OKX's "free endpoint" A2MCP model.
   app.post('/mcp', async (req, res) => {
     const mcpServer = createSoloFiMcpServer(userRepository, invoiceService, pocketService, advisorService);
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    // SDK default is SSE streaming (Content-Type: text/event-stream, `event:`/`data:`
+    // framed body) even for a single-shot tools/list — spec-compliant, but OKX's
+    // platform tester is undocumented and every other layer (x402 challenge, headers,
+    // protocol, token resolution) is independently verified correct already. A plain
+    // HTTP client expecting a JSON body would treat SSE-framed text as an unparseable/
+    // non-response, matching both the "x402 validation failed" and "timed out" rejection
+    // lines. enableJsonResponse is the SDK's own documented compatibility switch for
+    // exactly this (see examples/server/jsonResponseStreamableHttp.ts) — Accept header
+    // requirements are unaffected, only the response Content-Type changes.
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     res.on('close', () => {
       transport.close();
       mcpServer.close();
